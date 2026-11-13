@@ -47,7 +47,7 @@ Step finished? -> move to next step -> log the result
 Finish program -> show result -> wait for required acknowledgement
 ```
 
-The application checks the process at **10 ms intervals**, refreshes the LCD at **100 ms intervals**, and services the watchdog when the main work is progressing. See [Architecture and firmware flow](docs/ARCHITECTURE.md) for the detailed explanation.
+The application checks the process at **10 ms intervals**, refreshes the LCD at **100 ms intervals**, and services the watchdog when the main work is progressing. See [Architecture and firmware flow](Diala_Firmware_v1.2.0/docs/ARCHITECTURE.md) for the detailed explanation.
 
 ## 3. Available programs
 
@@ -62,7 +62,7 @@ The application checks the process at **10 ms intervals**, refreshes the LCD at 
 
 Four additional **service programs** are implemented: drain tank, fill tank, prime lines, and valve seal test. Service actions must be performed only under an approved bench/commissioning procedure.
 
-The detailed steps, measurement rules, program states, and recipe lookup are explained in [Architecture and firmware flow](docs/ARCHITECTURE.md).
+The detailed steps, measurement rules, program states, and recipe lookup are explained in [Architecture and firmware flow](Diala_Firmware_v1.2.0/docs/ARCHITECTURE.md).
 
 ## 4. Main hardware
 
@@ -74,30 +74,35 @@ The detailed steps, measurement rules, program states, and recipe lookup are exp
 - **Memory:** MB85RC512T 64 KB I2C FRAM; RTC with battery backup.
 - **Connections:** SWD programming through J2 and 115200-baud USB-C service serial through J3 (CH340C).
 
-For **V1-V10 roles, connectors, and the STM32 pin map**, see [Hardware and pin map](docs/HARDWARE_AND_PINS.md).
+For **V1-V10 roles, connectors, and the STM32 pin map**, see [Hardware and pin map](Diala_Firmware_v1.2.0/docs/HARDWARE_AND_PINS.md).
 
 ## 5. Project structure
 
 ```text
-Diala_Firmware_v1.2.0/
-|-- README.md                 # Start here (this file)
-|-- BRINGUP.md                # Existing hardware commissioning procedure
-|-- CHANGES.md                # Existing firmware revision history
-|-- Makefile                  # Firmware build and checks
-|-- src/
-|   |-- app/                  # Machine logic, UI, alarms, logging and tests
-|   |-- bsp/
-|   |   |-- bsp.h             # Hardware interface shared by firmware/simulator
-|   |   `-- stm32/           # STM32 drivers, pins, startup and main()
-|   `-- sim/                  # Host simulation and scenario tests
-|-- tools/                    # Source checks, image CRC and kit-test runner
-|-- linker/                   # STM32F407VE memory layout
-|-- hw/                       # Board netlist and RC4 pad data
-|-- build/                    # Supplied .hex, .bin, .elf, .map and test report
-`-- docs/                     # Explanations provided with this README
+Renal-Assist-System-RAS-/
+|-- README.md                 # Main README (this file)
+`-- Diala_Firmware_v1.2.0/
+    |-- BRINGUP.md            # Hardware commissioning procedure
+    |-- CHANGES.md            # Firmware revision history
+    |-- Makefile              # Firmware build and checks
+    |-- src/
+    |   |-- app/              # Machine logic, UI, alarms, logging and tests
+    |   |-- bsp/              # Board support and STM32 drivers
+    |   `-- sim/              # PC simulation and scenario tests
+    |-- tools/                # Source checks, image CRC and kit-test runner
+    |-- linker/               # STM32F407VE memory layout
+    |-- hw/                   # Board netlist and RC4 pad data
+    |-- build/                # Supplied firmware binaries and test report
+    `-- docs/
+        |-- ARCHITECTURE.md
+        |-- HARDWARE_AND_PINS.md
+        |-- BUILD_AND_TESTING.md
+        `-- SERVICE_CLI.md
 ```
 
 **Where should I look in the code?**
+
+The following code paths are relative to `Diala_Firmware_v1.2.0/`.
 
 | Want to understand or modify... | Begin with... |
 | --- | --- |
@@ -114,13 +119,14 @@ Diala_Firmware_v1.2.0/
 | Automated on-board checks | `src/app/kittest.c`, `tools/kittest.py` |
 | Simulator tests | `src/sim/sim_main.c`, `src/sim/bsp_sim.c` |
 
-For how the files call each other, use the [file-by-file architecture guide](docs/ARCHITECTURE.md).
+For how the files call each other, use the [file-by-file architecture guide](Diala_Firmware_v1.2.0/docs/ARCHITECTURE.md).
 
 ## 6. Run software tests on a PC
 
-On Linux or WSL with `gcc`, `make`, and `python3` installed:
+On Linux or WSL with `gcc`, `make`, and `python3` installed, open a terminal at the **repository root**. Enter the firmware folder first:
 
 ```bash
+cd Diala_Firmware_v1.2.0
 make test
 python3 tools/check_pinmap.py
 python3 tools/check_cycle_table.py
@@ -129,11 +135,11 @@ python3 tools/check_lcd_text.py
 
 `make test` compiles a simulated version of the firmware and runs the test scenarios **without requiring the Diala board**. The other commands verify the recorded pin map, the 21-step main sequence, and LCD text lengths.
 
-To build a flashable image, install the ARM GNU toolchain and the required CMSIS header repositories first. **The uploaded ZIP does not include its `vendor/` directory.** See [Build, testing, and commissioning](docs/BUILD_AND_TESTING.md) before running `make` or `make all-checks`.
+To build a flashable image, install the ARM GNU toolchain and the required CMSIS header repositories first. **The uploaded firmware ZIP does not include its `vendor/` directory.** See [Build, testing, and commissioning](Diala_Firmware_v1.2.0/docs/BUILD_AND_TESTING.md) before running `make` or `make all-checks`.
 
 ## 7. Program or connect to an actual board
 
-The supplied `build/diala_fw.hex` and `build/diala_fw.bin` are existing firmware images. For a controlled bench setup, programming is via **ST-LINK/SWD at J2**, not through the CH340C serial port. The USB-C service connection at **J3** is used for commands and diagnostics.
+Inside `Diala_Firmware_v1.2.0/`, the supplied `build/diala_fw.hex` and `build/diala_fw.bin` are existing firmware images. For a controlled bench setup, programming is via **ST-LINK/SWD at J2**, not through the CH340C serial port. The USB-C service connection at **J3** is used for commands and diagnostics.
 
 After appropriate electrical checks and programming, connect a serial terminal at **115200 baud, 8 data bits, no parity, 1 stop bit (8N1)**. Useful read-only commands:
 
@@ -144,11 +150,11 @@ diag
 help
 ```
 
-See [Service console and calibration](docs/SERVICE_CLI.md) for all supported commands. For physical first power-up and connection order, follow the existing [BRINGUP.md](BRINGUP.md) with qualified engineering supervision; this README is **not** a replacement for that procedure.
+See [Service console and calibration](Diala_Firmware_v1.2.0/docs/SERVICE_CLI.md) for all supported commands. For physical first power-up and connection order, follow the existing [BRINGUP.md](Diala_Firmware_v1.2.0/BRINGUP.md) with qualified engineering supervision; this README is **not** a replacement for that procedure.
 
 ## 8. Verification status of this archive
 
-The supplied release report (`build/test_report.txt`) states that the release gate passed. A fresh inspection of the uploaded source also produced:
+The supplied release report (`Diala_Firmware_v1.2.0/build/test_report.txt`) states that the release gate passed. A fresh inspection of the uploaded source also produced:
 
 | Check | Result |
 | --- | --- |
@@ -171,8 +177,8 @@ These results do **not** establish a successful new ARM build or physical bench/
 
 ## More documentation
 
-- [Architecture and firmware flow](docs/ARCHITECTURE.md) - how each module works, step sequencing, states, recipes, logging, safety checks, and where to edit code.
-- [Hardware and pin map](docs/HARDWARE_AND_PINS.md) - valves, sensors, interfaces, pins, supply details, and board-specific concerns.
-- [Build, testing, and commissioning](docs/BUILD_AND_TESTING.md) - PC tests, toolchain, flashing, kit test, and what remains to verify.
-- [Service console and calibration](docs/SERVICE_CLI.md) - commands, examples, saved values, and diagnostic troubleshooting.
-- [Existing revision history](CHANGES.md) and [existing board bring-up](BRINGUP.md) - detailed source-package reference documents.
+- [Architecture and firmware flow](Diala_Firmware_v1.2.0/docs/ARCHITECTURE.md) - how each module works, step sequencing, states, recipes, logging, safety checks, and where to edit code.
+- [Hardware and pin map](Diala_Firmware_v1.2.0/docs/HARDWARE_AND_PINS.md) - valves, sensors, interfaces, pins, supply details, and board-specific concerns.
+- [Build, testing, and commissioning](Diala_Firmware_v1.2.0/docs/BUILD_AND_TESTING.md) - PC tests, toolchain, flashing, kit test, and what remains to verify.
+- [Service console and calibration](Diala_Firmware_v1.2.0/docs/SERVICE_CLI.md) - commands, examples, saved values, and diagnostic troubleshooting.
+- [Existing revision history](Diala_Firmware_v1.2.0/CHANGES.md) and [existing board bring-up](Diala_Firmware_v1.2.0/BRINGUP.md) - detailed source-package reference documents.
