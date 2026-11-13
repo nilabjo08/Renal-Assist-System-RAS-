@@ -1,0 +1,84 @@
+Diala firmware 1.2.0 - release gate (make all-checks), 2026-10-18
+
+Memory region         Used Size  Region Size  %age Used
+           FLASH:       50892 B       512 KB      9.71%
+             RAM:       19016 B       128 KB     14.51%
+python3 tools/patch_crc.py build/diala_fw.raw.elf build/diala_fw.elf
+image CRC-32 0xE7FD15C3 over 50888 bytes
+arm-none-eabi-size build/diala_fw.elf
+   text	   data	    bss	    dec	    hex	filename
+  50824	     12	  19008	  69844	  110d4	build/diala_fw.elf
+arm-none-eabi-objcopy -O ihex build/diala_fw.elf build/diala_fw.hex
+arm-none-eabi-objcopy -O binary --gap-fill 0xFF build/diala_fw.elf build/diala_fw.bin
+./build/sim
+Diala firmware 1.2.0 - host simulator, 52 scenarios
+1   step tables + output interlocks              FW-02 SAF-01 SAF-02 PCB-03   PASS
+    TCV 120.3 ml, leak loss 3.4 mmHg, cycle 6:43
+2   first use, low flux: PASS, baseline          PRC-05 GEN-02 GEN-05 FW-04   PASS
+3   reuse, TCV 92 % of baseline: PASS            PRC-05                       PASS
+4   reuse, TCV 75 % of baseline: FAIL            PRC-05 alarm TCV             PASS
+5   leak 30 mmHg, low flux: FAIL                 stage 7                      PASS
+6   leak 20 mmHg, high flux (limit 25): PASS     stage 7                      PASS
+7   leak 20 mmHg, low flux (limit 17): FAIL      stage 7                      PASS
+8   connector leak: vacuum alarm, vent           stage 2                      PASS
+9   low supply at start: no water valves         alarm low pressure           PASS
+10  supply lost during rinse: 3 s rule           alarm low pressure           PASS
+11  concentrate low switch: add chemical         S7 alarm                     PASS
+12  dosing pump stall: add chemical              alarm add chemical           PASS
+13  tank overfill: drain recovery                alarm overfill               PASS
+14  liquid sensor dead: TCV step timeout         PRC-06                       PASS
+15  STOP key: safe state, logged                 UI-02 FW-03                  PASS
+16  dialyser removed mid-cycle                   safety                       PASS
+17  disinfect blocked with dialyser fitted       SAN-02 SAF-03                PASS
+18  disinfect -> blocked -> rinse-out -> ok      SAN-01 SAN-03                PASS
+19  power loss in germicide: warn on restart     alarm power loss             PASS
+20  valve driver fault mid-cycle                 alarm valve fault            PASS
+21  driver self-test fails: degraded run         bench item DRV-1             PASS
+22  pre-clean program                            PRC-04                       PASS
+23  log ring: 2,082 records, CRC                 FW-06                        PASS
+24  calibration A/B copies, CRC, defaults        FW-05                        PASS
+    LCD: [S3 DOSE CLEANER     ] [Tank 0.2 g          ]
+25  keypad: ID + priming entry, start            UI-01 UI-03                  PASS
+26  hold: vent 0.5 s every 10 s                  PRC-03                       PASS
+27  middle flux 71-90 ml recipe 16+684 g         PRC-02 recipes               PASS
+28  USB CLI: status, CSV log, lock               GEN-06                       PASS
+29  pressure sensor fault                        alarm sensor                 PASS
+30  24 V supply out of range                     alarm supply voltage         PASS
+    2085 log lines in 13.3 s during the cycle, max watchdog gap 104 ms, max loop stall 12 ms
+31  log dump (2,082 rows) during a cycle         v1.1 non-blocking USB        PASS
+32  power-on self-test: healthy board            v1.1 POST                    PASS
+33  power-on self-test: FRAM dead                v1.1 POST FW-06              PASS
+34  power-on self-test: driver nFAULT stuck      v1.1 POST B1                 PASS
+    LCD: [Tank 400.3 g        ] [39.5 g/s  10.0 s    ]
+35  service: fill / drain tank, rates            v1.1 commissioning           PASS
+36  service: prime lines (bypass)                v1.1 commissioning           PASS
+    weep 0x000: [SEAL TEST: PASS     ] [1:0.0 2:0.0 3:0.0   ]
+37  service: seal test, all valves tight         walkthrough pt 1             PASS
+    weep 0x200: [SEAL TEST: FAIL     ] [1:59.6 2:0.0 3:0.0  ]
+38  service: seal test, V10 weeping              walkthrough pt 1             PASS
+    weep 0x010: [SEAL TEST: FAIL     ] [1:59.6 2:60.2 3:60.7]
+39  service: seal test, V5 weeping               walkthrough pt 1             PASS
+40  time-limit scale 200 % (bench)               v1.1 B4                      PASS
+41  dosing pump open wire                        v1.1 pump check              PASS
+42  step telemetry, trace, steps CSV             v1.1 B4                      PASS
+43  rinse-out: 6 h hold warning                  SAN-01                       PASS
+44  keypad: service menu -> drain tank           v1.1 UI                      PASS
+45  CLI: change PIN, diag                        v1.1 GEN-06                  PASS
+46  valve hold PWM written at every rail-up      v1.1 B8                      PASS
+    39 prompts answered; K,4.6,DRIVER HEAT,PASS,45.3 C max,<= 85.0 C, 5 x 20 s six va
+47  kit test, all 28 items, power cycle          v1.2 kittest                 PASS
+48  kit test catches swap, bad divider, no probe v1.2 kittest                 PASS
+49  kit test: no valve opens with water on       v1.2 safety                  PASS
+50  kit test: unexpected reset reported          v1.2 kittest                 PASS
+51  firmware image CRC fault                     v1.2 POST                    PASS
+52  event log: keys, inputs, valves, steps       v1.2 events                  PASS
+52/52 scenarios passed
+python3 tools/check_pinmap.py
+pin map: 42 firmware pins checked against the RC4 Gerbers (659 pads) and diala_main.net, 0 errors
+python3 tools/check_cycle_table.py
+cycle table: 21 steps checked against PRD truth table, 0 errors
+python3 tools/check_lcd_text.py
+lcd text: 267 strings checked, 0 errors
+cppcheck --quiet --enable=warning,performance,portability --error-exitcode=1 --std=c11 \
+   --suppress=missingIncludeSystem -DSTM32F407xx src/app src/sim
+make_rc=0
