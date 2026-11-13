@@ -1,6 +1,6 @@
 # Diala Firmware Architecture - Explained Simply
 
-This guide is based on the C source in **Diala Firmware v1.2.0**, not on the older README. Start with the [main README](../README.md) if this is your first time opening the project.
+This guide is based on the C source in **Diala Firmware v1.2.0**, not on the older README. Start with the [main README](../../README.md) if this is your first time opening the project.
 
 ## 1. The big idea
 
