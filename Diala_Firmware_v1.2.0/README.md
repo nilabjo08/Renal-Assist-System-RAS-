@@ -1,178 +1,150 @@
-# Diala Firmware v1.2.0
+# Diala main controller firmware v1.2.0
 
-**Firmware for the Diala dialyser-reprocessing machine**  
-**Controller:** STM32F407VET6 | **Board:** Diala main PCB RC4 | **Language:** C11
+Morphedo Technologies · main controller PCB RC4 (STM32F407VET6) · 2026-10-18
 
-This repository contains the software that reads the machine's sensors, operates its valves and dosing pump, guides the user through a 20 x 4 LCD, and records what happened during each processing cycle. It also includes a PC simulator and an automated hardware test utility.
+Runs the full dialyser reprocessing cycle from PRD v0.1 on the board as fabricated (Gerber set of 17 Oct 2026, BOM issue 17 Oct 2026), against manifold DIALA-MAN-001 (valve truth table as in the Cycle Flow Walkthrough). Operator programs: low, middle and high flux, pre-clean, daily disinfection, rinse-out. Service programs: drain tank, fill tank, prime lines, valve seal test.
 
-> **Engineering / safety notice:** This is firmware for equipment used in a medical reprocessing workflow. The included simulation tests are not proof of physical performance, reprocessing efficacy, or regulatory/clinical approval. Do not use it for patient-related processing until the complete machine, process, sensor calibration, and safety systems have been independently validated and formally approved.
+First power-up and commissioning: follow **BRINGUP.md** step by step. Automated board / kit test: **`kittest`** below and `tools/kittest.py`. What changed and why: **CHANGES.md**.
 
-## 1. What is inside?
+## Files
 
-| Part | Simple explanation |
+| Path | What |
 | --- | --- |
-| **Main controller** | An STM32F407 runs the firmware without an operating system (bare metal). |
-| **Processing sequence** | A step-by-step program decides which valves/pump should run and when to advance. |
-| **Sensors** | Read tank weight, pressure, water flow, liquid detection, presence switches, supply voltage, and pump current. |
-| **User interface** | A 20 x 4 character LCD and six buttons for programs, status, alarms, and service functions. |
-| **Safety and diagnostics** | Startup checks, time limits, alarms, output checks, watchdogs, and recovery handling. |
-| **Storage** | External FRAM saves calibration, settings, dialyser history, and cycle results across resets. |
-| **Testing** | A PC simulator, three source/hardware cross-check scripts, and a 28-item on-board kit test. |
+| `build/diala_fw.hex`, `.bin` | Image to flash |
+| `build/diala_fw.elf`, `.map` | Debug image and linker map |
+| `build/test_report.txt` | Output of the release gate (`make all-checks`) |
+| `build/SHA256SUMS.txt` | Checksums of the four build files |
+| `src/app/` | Application: sequencer (`cycle.c`), power-on self-test (`post.c`), sensors, outputs and interlocks, alarms, storage, LCD UI, USB CLI |
+| `src/bsp/stm32/` | Board support for RC4: pin map (`board.h`), drivers, clock, fault handlers, startup |
+| `src/sim/` | Host simulator: plant model and 46 scenario tests |
+| `tools/kittest.py` | Laptop script: runs the automated test, shows the technician only the actions, saves the report folder |
+| `tools/` (checks) | `check_pinmap.py` (firmware pins vs. RC4 Gerbers and netlist), `check_cycle_table.py` (step table vs. PRD truth table), `check_lcd_text.py` (every LCD string fits 20 characters), `patch_crc.py` (writes the image CRC at build time) |
+| `hw/diala_main_rc4_pads.csv` | Every copper pad of the fabricated RC4 board and its net, read from the Gerbers |
+| `hw/diala_main.net` | Schematic netlist (agrees with the Gerbers pad for pad) |
 
-## 2. How it works (simple view)
+## Flash the board
 
-```text
-Power ON
-   |
-   v
-Initialize board + load saved settings
-   |
-   v
-Check firmware image, sensors, memory and valve driver
-   |
-   v
-Show home screen / faults on LCD
-   |
-   v
-Choose a program -> enter required details -> START
-   |
-   v
-Read sensors -> check safety -> run the current step
-   |                  |
-   |                  +--> If unsafe: stop outputs, alarm, recover if safe
-   v
-Step finished? -> move to next step -> log the result
-   |
-   v
-Finish program -> show result -> wait for required acknowledgement
+1. ST-LINK V2/V3 on J2 (10-pin 1.27 mm SWD), board powered from 24 V.
+2. Any one of:
+   - STM32CubeProgrammer: open `build/diala_fw.hex`, Download, Reset.
+   - `STM32_Programmer_CLI -c port=SWD mode=UR -w build/diala_fw.hex -v -rst`
+   - `openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c "program build/diala_fw.elf verify reset exit"`
+3. LCD: "DIALA REPROCESSOR / FW 1.2.0 / main PCB RC4 / Self test...", then the home screen or the self-test result page.
+4. Service port: USB-C (J3), 115200 8N1. Type `help`.
+
+Debugging note: the external watchdog U4 (TPS3823) resets the MCU about 1.1–1.6 s after the CPU stops kicking it. When the debugger halts the core, expect a reset; connect under reset (`mode=UR`) and avoid long breakpoints.
+
+## Rebuild and check (Ubuntu 24.04)
+
+```
+sudo apt install gcc-arm-none-eabi libnewlib-arm-none-eabi cppcheck python3
+git clone --depth 1 https://github.com/STMicroelectronics/cmsis_device_f4 vendor/cmsis_device_f4
+git clone --depth 1 https://github.com/ARM-software/CMSIS_5 vendor/CMSIS_5
+make all-checks
 ```
 
-The application checks the process at **10 ms intervals**, refreshes the LCD at **100 ms intervals**, and services the watchdog when the main work is progressing. See [Architecture and firmware flow](docs/ARCHITECTURE.md) for the detailed explanation.
+`make all-checks` is the release gate and must end without errors: target build with warnings as errors; 46 simulator scenarios; pin map against the RC4 Gerbers; step table against the PRD; LCD text lengths; cppcheck.
 
-## 3. Available programs
+Release result: 34.9 KB flash (6.7 %), 15.1 KB RAM (11.5 %), 0 warnings; 46/46 scenarios; 41 firmware pins / 659 pads, 0 errors; 21/21 steps; 200 LCD strings; 0 cppcheck findings.
 
-| Program | What it is for |
+The simulator charges the time the real board spends in blocking I/O (FRAM over bit-banged I²C, LCD writes, ADC) to the simulated clock, so watchdog gaps and loop stalls in the tests are realistic. Worst loop stall measured: 12 ms; worst watchdog gap during a full 2,082-record log dump in a running cycle: 104 ms (the TPS3823 trips at 1,120 ms minimum).
+
+## Operator use
+
+- **Home:** UP/DOWN choose the program, START selects it. ENTER clears an alarm; ENTER held 3 s opens the service PIN.
+- **Patient programs:** enter the 8-digit dialyser ID (UP/DOWN change a digit, ENTER next). A new ID asks for the priming volume (25–250 ml); a known ID shows its baseline TCV and use count. Confirm with START.
+- **During a cycle:** STOP aborts to the safe state at any time; MUTE silences the buzzer.
+- **End of a patient cycle:** PASS/FAIL, TCV (ml and % of baseline) and leak loss stay on screen while the dialyser vents every 10 s. Removing the dialyser ends the cycle.
+- **Rinse-out:** the confirm screen shows "HOLD LEFT xhyym" if the 6 h disinfection hold (SAN-01) is not over.
+
+## Automated board / kit test (`kittest`)
+
+The firmware tests the board itself, judges every result against a fixed limit, and reports. The technician only does the physical actions it asks for (place a weight, flip a switch, set a potentiometer) and answers the few questions only a person can (did only V3 click? are the LCD rows clear?).
+
+Run it from the laptop: `python kittest.py --port COM5 --serial RC4-001 [--stage 1-5] [--mode quick|long]`. The script needs `pip install pyserial`. It writes a folder `<serial>_<date-time>/` with `session.log`, `report.csv`, `diag.txt`, `events.csv`, `summary.txt`, and exits 0 on PASS, 1 on FAIL. Without the script: `unlock <pin>`, `set serial <name>`, `kittest [1-5|all] [quick|long]`, answer with START / STOP on the keypad or `ok` / `no` / `skip` over USB, then `kittest report`.
+
+| Stage | Items (limit) |
 | --- | --- |
-| **Low flux** | Full reprocessing sequence using the low-flux recipe. |
-| **Middle flux** | Same main sequence, with a middle-flux recipe. |
-| **High flux** | Same main sequence, with a high-flux recipe. |
-| **Pre-clean** | Runs only the early cleaning/rinsing stages. |
-| **Disinfect** | Machine disinfection using a bypass setup (not a fitted dialyser). |
-| **Rinse-out** | Flushes the machine after disinfection and requires a test-strip result. |
+| 1 Controller | 1.1 image CRC (matches build) · 1.2 clock source (info) · 1.3 RTC advances 2–3 s in 2.1 s · 1.4 24 V and 5 V in limits |
+| 2 Display, keypad | 2.1 all six keys within 30 s each · 2.2 LCD rows clear (technician) · 2.3 buzzer, green, red (technician) |
+| 3 Memory, scale | 3.1 FRAM read-back · 3.2 FRAM keeps its record over a power-off (the test resumes by itself) · 3.3 load-cell samples · 3.4 zero noise ≤ 1.0 g (zero saved) · 3.5 span 100–5000 counts/g (span saved) · 3.6 0 g and 500 g within 1.0 g, three times · 3.7 drift ≤ 2.0 g over 15 min (`long` 60 min, `quick` skips) |
+| 4 Valve driver | 4.1 rail ≥ 20 V within 1 s · 4.2 nFAULT high after the fault reset · 4.3 V2 unplugged is seen, then clears · 4.4 each of V1–V10 and the pump drives only its own load (technician) · 4.5 DS18B20 answers (SKIP if not fitted) · 4.6 driver ≤ 85.0 °C after 5 × 20 s with V1 V3 V4 V6 V7 V9 on |
+| 5 Sensors, pump | 5.1 S2 at 0.50 / 1.83 / 4.50 V reads −750 / 0 / +1500 mmHg within 40 · 5.2 S2 at 0 V flagged · 5.3 S3 at 0.50 / 1.00 / 4.50 V reads 0 / 21.8 / 174 psig within 1 / 1 / 3 · 5.4–5.6 S6, S7, S8 closed then open · 5.7 75 Hz reads 10.0 ± 0.3 L/min · 5.8 pump ≥ 15 mA |
 
-Four additional **service programs** are implemented: drain tank, fill tank, prime lines, and valve seal test. Service actions must be performed only under an approved bench/commissioning procedure.
+Safety: no valve is opened while S3 reads more than 5 psig; the test asks for RO water to be turned off and waits. Patient and service programs cannot start while a kit test runs. Stage 3 changes the scale calibration (zero and span are saved), which is what a new board needs anyway. A reset during any item other than 3.2 ends the test with that item failed.
 
-The detailed steps, measurement rules, program states, and recipe lookup are explained in [Architecture and firmware flow](docs/ARCHITECTURE.md).
+Report line format: `K,<item>,<name>,<PASS|FAIL|SKIP|INFO>,<value>,<limit>,<note>`, then `SUMMARY,<PASS|FAIL>,…,serial <name>`. Progress and results are kept in FRAM (0x0140), so `kittest report` shows the last run even after a power-off.
 
-## 4. Main hardware
+## Event log
 
-- **MCU:** STM32F407VET6, Cortex-M4, 512 KB flash, 128 KB SRAM.
-- **Outputs:** 10 solenoid valves (V1-V10), one dosing pump, a buzzer and two status LEDs.
-- **Valve driver:** Two chained DRV8860 devices, plus a controlled valve-power rail.
-- **Sensors:** HX711 load-cell interface; S2 bus pressure; S3 supply pressure; S4 flow pulses; S6/S7/S8 switches; monitored power rails; optional S5 pH and DS18B20 temperature input.
-- **Display and buttons:** HD44780-compatible 20 x 4 LCD and START, STOP, MUTE, UP, DOWN, ENTER.
-- **Memory:** MB85RC512T 64 KB I2C FRAM; RTC with battery backup.
-- **Connections:** SWD programming through J2 and 115200-baud USB-C service serial through J3 (CH340C).
+Every reset, self-test result, alarm, key press, S6/S7/S8 change, valve-rail check, valve and pump command, program start and end, step end, driver-temperature band change and kit-test result is recorded with a millisecond time stamp. `events [n]` prints the last n (up to 256, held in RAM since power-on); `events on` streams each one as it happens (always on during a kit test). Format: `E,<seconds since power-on>,<event>,<detail>`.
 
-For **V1-V10 roles, connectors, and the STM32 pin map**, see [Hardware and pin map](docs/HARDWARE_AND_PINS.md).
+## Driver temperature probe (optional)
 
-## 5. Project structure
+A DS18B20 on the spare header J4: data to J4 pin 9 (PA8), 3.3 V to pin 14, GND to pin 15, 4.7 kΩ between pins 9 and 14 (in the harness). Glue or clamp the probe on U10. The firmware reads it every second; it appears on the SENSORS screen, in `status`, as the `driver_max_C` column of `steps`, as TEMP events, and is used by kit-test item 4.6. Without the probe everything else works and item 4.6 is skipped.
 
-```text
-Diala_Firmware_v1.2.0/
-|-- README.md                 # Start here (this file)
-|-- BRINGUP.md                # Existing hardware commissioning procedure
-|-- CHANGES.md                # Existing firmware revision history
-|-- Makefile                  # Firmware build and checks
-|-- src/
-|   |-- app/                  # Machine logic, UI, alarms, logging and tests
-|   |-- bsp/
-|   |   |-- bsp.h             # Hardware interface shared by firmware/simulator
-|   |   `-- stm32/           # STM32 drivers, pins, startup and main()
-|   `-- sim/                  # Host simulation and scenario tests
-|-- tools/                    # Source checks, image CRC and kit-test runner
-|-- linker/                   # STM32F407VE memory layout
-|-- hw/                       # Board netlist and RC4 pad data
-|-- build/                    # Supplied .hex, .bin, .elf, .map and test report
-`-- docs/                     # Explanations provided with this README
-```
+## Service menu (PIN, default 2580 — change it with `set pin`)
 
-**Where should I look in the code?**
+SENSORS · VALVE TEST (one output at a time, auto-off 10 s, shows rail voltage and nFAULT) · DRAIN TANK · FILL TANK 400 g · PRIME LINES · SEAL TEST (capped) · SCALE ZERO · SCALE SPAN · PRESSURE ZERO · LINE VOLUME WF · SET CLOCK · DRIVER MONITOR · SELF TEST RESULT · CLEAR LOGS · EXIT
 
-| Want to understand or modify... | Begin with... |
-| --- | --- |
-| Startup and main loop | `src/bsp/stm32/main.c`, `src/app/app.c` |
-| Process stages, valve combinations, exit rules | `src/app/cycle.c`, `src/app/cycle.h` |
-| Recipe selection and quantities | `src/app/recipes.c` |
-| Limits, time intervals, valve names | `src/app/config.h` |
-| Sensor reading and calibration math | `src/app/sensors.c`, `src/app/store.h` |
-| Valve/pump control and interlocks | `src/app/outputs.c`, `src/bsp/stm32/bsp_stm32.c` |
-| LCD screens and keypad actions | `src/app/ui.c` |
-| Alarms and startup diagnostics | `src/app/alarms.c`, `src/app/post.c` |
-| USB serial commands | `src/app/cli.c` |
-| Saved settings, historical results | `src/app/store.c` |
-| Automated on-board checks | `src/app/kittest.c`, `tools/kittest.py` |
-| Simulator tests | `src/sim/sim_main.c`, `src/sim/bsp_sim.c` |
+Service programs run on the same sequencer as the patient cycle with every interlock in force, are logged, and record step telemetry.
 
-For how the files call each other, use the [file-by-file architecture guide](docs/ARCHITECTURE.md).
+| Program | Valves | Ends when | Shows |
+| --- | --- | --- | --- |
+| DRAIN TANK | V1 V3 V5 V6 | tank ≤ 5 g (120 s) | tank weight, drain rate g/s |
+| FILL TANK 400 g | V2 V5 | tank ≥ 400 g (45 s) | tank weight, fill rate g/s |
+| PRIME LINES | V2 V4 V6 · V2 V3 V7 · V2 V9 V8, 30 s each | time | — (dialyser or bypass must be fitted) |
+| SEAL TEST | evacuate V1 V3 V4 V6 V7 V9 to −250 mmHg, then hold 20 s each with V3 V4 V9 · V3 V9 · V9 | time | loss per window, PASS if each ≤ 3.0 mmHg, and which valves to check |
 
-## 6. Run software tests on a PC
+Seal-test reading: window 1 high only → V7 / V10 or the V cap; window 2 high, 3 low → V6 or the A cap; window 3 high → V2 / V5 or the DI cap.
 
-On Linux or WSL with `gcc`, `make`, and `python3` installed:
+## USB commands
 
-```bash
-make test
-python3 tools/check_pinmap.py
-python3 tools/check_cycle_table.py
-python3 tools/check_lcd_text.py
-```
+Open: `help ver status diag log [n] steps events [n] time [YYYY-MM-DD HH:MM:SS] dlz <id> stop enter unlock <pin> lock`, and `ok` / `no` / `skip` / `kittest report` during or after a kit test
 
-`make test` compiles a simulated version of the firmware and runs the test scenarios **without requiring the Diala board**. The other commands verify the recorded pin map, the 21-step main sequence, and LCD text lengths.
+After `unlock <pin>`:
+`kittest [1-5|all] [quick|long]` · `kittest abort` · `events <on|off>` · `set serial <name>` · `valve <1-10|pump|spare> <on|off>` · `drv` · `trace <on|off>` · `diag clear` · `cal zero | cal span <g> | cal pzero | cal wf <ml_x10>` · `start <low|mid|high|preclean|disinfect|rinseout|drain|fill|prime|seal> [type] [prime_ml] [id]` · `strip <neg|pos>` · `set tmo <100-300>` · `set pumpcheck <on|off>` · `set monitor <on|off>` · `set pin <nnnn>` · `set hold <0-7>`
 
-To build a flashable image, install the ARM GNU toolchain and the required CMSIS header repositories first. **The uploaded ZIP does not include its `vendor/` directory.** See [Build, testing, and commissioning](docs/BUILD_AND_TESTING.md) before running `make` or `make all-checks`.
+- `steps` prints the last run as CSV: step, valves, end reason (exit / time / TIMEOUT / ABORT), duration, tank weight at start and end, S2 min/max, mean supply pressure, mean inlet flow.
+- `trace on` streams a `STEP,...` line at each step end and a `T,...` line every second while a program runs. Capture with any serial terminal into a file.
+- `log` and `steps` never block: lines are sent only as fast as the UART drains, while the machine keeps running.
 
-## 7. Program or connect to an actual board
+## Power-on self-test
 
-The supplied `build/diala_fw.hex` and `build/diala_fw.bin` are existing firmware images. For a controlled bench setup, programming is via **ST-LINK/SWD at J2**, not through the CH340C serial port. The USB-C service connection at **J3** is used for commands and diagnostics.
+Runs after every reset while the splash is shown (about 0.5 s): firmware image CRC (a mismatch blocks every program: reflash) · FRAM write/read-back · 24 V and 5 V · load cell samples · S2 and S3 in range · valve rail switched on with every output off, must reach 20 V · DRV8860 nFAULT must release after the fault reset · rail off again. Also reported: clock source (crystal or internal), RTC source (Y2 or internal), and whether the last restart came from a CPU fault or the watchdog. Failures raise the matching alarm; a FRAM failure blocks all programs because baseline TCV and the log could not be kept.
 
-After appropriate electrical checks and programming, connect a serial terminal at **115200 baud, 8 data bits, no parity, 1 stop bit (8N1)**. Useful read-only commands:
+## Calibrate before first use
 
-```text
-ver
-status
-diag
-help
-```
+1. Scale: empty tank → SCALE ZERO; known weight (e.g. 500 g) on the tank → SCALE SPAN, enter the weight.
+2. Pressure: all ports open to air → PRESSURE ZERO.
+3. Line volume WF: fit the 70 ml calibration cell, run a cycle, then WF = (measured TCV + current WF) − 70 ml, entered in ml × 10 (70.0 ml → 700).
+4. Clock: SET CLOCK, or `time 2026-10-18 10:30:00` over USB.
 
-See [Service console and calibration](docs/SERVICE_CLI.md) for all supported commands. For physical first power-up and connection order, follow the existing [BRINGUP.md](BRINGUP.md) with qualified engineering supervision; this README is **not** a replacement for that procedure.
+## Must be confirmed on the bench
 
-## 8. Verification status of this archive
+| # | Item | How | Where to change |
+| --- | --- | --- | --- |
+| B1 | DRV8860 special-command waveform (fault reset; also used by the hold PWM) | Scope LATCH/CLK at rail-up; `diag` must show no driver-check failure with all ten valves plugged in | `DRV_SPECIAL_START_HIGH` in `bsp_stm32.c` |
+| B2 | Valve map | Service VALVE TEST: V1–V10 each click their own valve (J10–J19) | `bsp_valve_write()` |
+| B3 | Polarity of S6 dialyser-present, S7 concentrate-low, S8 liquid | SENSORS screen while operating each one | `LIQ_ACTIVE_HIGH`, `DLZ_ACTIVE_LOW`, `CONC_ACTIVE_LOW` in `board.h` |
+| B4 | Real flow rates against step time limits | FILL / DRAIN rates, then a full cycle with `trace on`; `set tmo 200` while measuring | step `max_ms` in `cycle.c` |
+| B5 | S2 range −100…+200 kPa (part pending approval) | Compare with a reference gauge | `S2_KPA_MIN/MAX` in `config.h` |
+| B6 | Load-cell counts per gram | Replaced by SCALE SPAN | service menu |
+| B7 | LCD timing through 74HCT541, buzzer, keypad wiring | Visual | `lcd_init()` |
+| B8 | Valve driver load: V1–V8 are VX223JA (size 2, 7 W, ≈0.29 A) on U10; the connector check has five on at once | Kit-test item 4.6 with the DS18B20 on U10. If above 85 °C: `set hold 5` (62.5 % after 110 ms), confirm `drv` shows "read-back ok", repeat 4.6, and check every valve still holds at full supply pressure | `set hold`, `DRV_ENERGISE_CODE` |
+| B9 | Seal-test pass limit 3.0 mmHg per 20 s | Run SEAL TEST on known-good valves several times | `SEAL_LIMIT_X10` in `config.h` |
+| B10 | Pump open-wire threshold 15 mA | Read pump mA on the SENSORS screen with the chosen pump | `PUMP_OPEN_MA`, or `set pumpcheck off` |
+| B11 | Crystal Y1 (see CHANGES.md) | `diag` shows the clock source | Hardware |
 
-The supplied release report (`build/test_report.txt`) states that the release gate passed. A fresh inspection of the uploaded source also produced:
+Step times the PRD left open (unchanged from v1.0.0): clean through membrane up to 60 s, ending at half the batch drawn; disinfection 150 g through each of A, V and dialysate paths plus 100 g cross path; rinse-out two tank fill-and-flush passes then 60 s per path; dilute steps pulse V2 (200 ms on / 400 ms off) in the last 30 g.
 
-| Check | Result |
-| --- | --- |
-| Host simulator | **52 / 52 scenarios passed** |
-| MCU pin-map cross-check | **42 pins, 0 errors** |
-| Main-sequence cross-check | **21 steps, 0 errors** |
-| LCD-text cross-check | **267 strings, 0 errors** |
-| Supplied `.bin` image CRC-32 | **Matches its final CRC word** |
-| Supplied image SHA-256 list | **Matches the four supplied build files** |
+## Design notes
 
-These results do **not** establish a successful new ARM build or physical bench/clinical verification. The uploaded archive lacks CMSIS vendor headers; the current review environment also lacks `arm-none-eabi-gcc` and `cppcheck`.
-
-## 9. Before publishing on GitHub
-
-- Keep the repository's **real source code**, not only the `.hex` file.
-- Review the default service PIN, firmware/manual valve commands, build artifacts, board details, and any test reports before making a repository public.
-- The supplied ZIP contains **no `LICENSE` file**; obtain the owner's decision before selecting a license or making redistribution claims.
-- Keep versions and release results accurate. The old README bundled in the ZIP contains earlier test-count figures; use the v1.2.0 results above.
-- Treat values marked `[verify]` in `src/app/config.h` and unfinished bench sign-offs as **not yet validated**.
-
-## More documentation
-
-- [Architecture and firmware flow](docs/ARCHITECTURE.md) - how each module works, step sequencing, states, recipes, logging, safety checks, and where to edit code.
-- [Hardware and pin map](docs/HARDWARE_AND_PINS.md) - valves, sensors, interfaces, pins, supply details, and board-specific concerns.
-- [Build, testing, and commissioning](docs/BUILD_AND_TESTING.md) - PC tests, toolchain, flashing, kit test, and what remains to verify.
-- [Service console and calibration](docs/SERVICE_CLI.md) - commands, examples, saved values, and diagnostic troubleshooting.
-- [Existing revision history](CHANGES.md) and [existing board bring-up](BRINGUP.md) - detailed source-package reference documents.
+- **Step tables:** each program is a table of steps (valves, exit condition, maximum time, timeout alarm). The tables are validated at every boot; if validation fails the firmware drives no output.
+- **Interlocks in one place (`outputs.c`):** no valve without the rail (PCB-03); V5 only in steps declared to use the tank and never in a rinse (SAF-02); V1 and V2 never together.
+- **Valve driver check at every rail-up:** after the fault reset with all outputs off, nFAULT must be high. If not (a valve plug open, or B1), the program continues with nFAULT monitoring off for that session and a warning is shown.
+- **Driver lines held low while the rail is off,** so the unpowered DRV8860s are never fed through their logic pins.
+- **Safe state:** any fault turns every output off at once, then vents or drains where safe, and latches the alarm (FW-03). A CPU fault switches the valve rail and pump off in the fault handler itself, records where it happened, and restarts.
+- **Watchdogs:** TPS3823 and IWDG kicked only when the sequencer and UI both ran (FW-04).
+- **Storage (FRAM):** calibration and settings in two CRC-protected copies (settings also hold the board serial and boot count); 256-entry dialyser table (also held in RAM, so lookups never stall the loop); 2,082-record cycle log; power-loss record; self-test scratch area; kit-test record.
+- **Image check:** the build writes the CRC-32 of the flash image into its last word (`tools/patch_crc.py`); the firmware recomputes it at every power-on.
