@@ -2,7 +2,7 @@
 
 This is a simple reference for the **serial commands that actually exist in `src/app/cli.c`**. It is intended for engineers and authorized service staff, not as an operating procedure for processing medical devices.
 
-Start with the [main README](../README.md), or use [Hardware and Pins](HARDWARE_AND_PINS.md) to understand what each sensor/valve is connected to.
+Start with the [main README](../../README.md), or use [Hardware and Pins](HARDWARE_AND_PINS.md) to understand what each sensor/valve is connected to.
 
 > **Safety:** Some commands directly energize valves and a pump, change calibration, disable monitoring, or start a fluid-processing sequence. Only use them with an approved, isolated bench setup and appropriate hardware safeguards. A serial response of `OK` is not proof that the connected fluid path is safe.
 
